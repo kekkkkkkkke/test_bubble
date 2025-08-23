@@ -1,10 +1,11 @@
 # cloudbuild.yaml
-steps:
-  - name: gcr.io/cloud-builders/docker
-    args: ["build", "-t", "$_IMAGE", "."]
-  - name: gcr.io/cloud-builders/docker
-    args: ["push", "$_IMAGE"]
 substitutions:
   _IMAGE: "asia-northeast1-docker.pkg.dev/$PROJECT_ID/containers/vm-ctrl:latest"
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_IMAGE}", "."]
+
+# ここに指定したイメージは、build 完了時に Cloud Build が自動で push します
 images:
-  - "$_IMAGE"
+  - "${_IMAGE}"
