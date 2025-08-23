@@ -1,5 +1,6 @@
 substitutions:
-  _IMAGE: "asia-northeast1-docker.pkg.dev/$PROJECT_ID/containers/vm-ctrl:latest"
+  _PROJECT_ID: "text-sns-prod-58480"   # ← 自分のプロジェクトIDを直接書く
+  _IMAGE: "asia-northeast1-docker.pkg.dev/${_PROJECT_ID}/containers/vm-ctrl:latest"
 
 steps:
   - name: gcr.io/cloud-builders/docker
@@ -8,6 +9,5 @@ steps:
 images:
   - "${_IMAGE}"
 
-# ★ここを追加（Cloud Logging のみに出力）
 options:
   logging: CLOUD_LOGGING_ONLY
