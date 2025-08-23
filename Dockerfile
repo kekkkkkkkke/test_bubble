@@ -1,20 +1,8 @@
 FROM python:3.11-slim
-
-# 依存の導入に必要な最小限のOSパッケージ
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
-
-# 依存を先に入れてレイヤキャッシュを効かせる
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
-# アプリ本体
-COPY app ./app
-
-ENV PYTHONUNBUFFERED=1
-EXPOSE 8080
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+COPY . .
+# Cloud Run が注入する PORT を使って起動（sh -c で環境変数展開）
+CMD ["sh","-c","uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
