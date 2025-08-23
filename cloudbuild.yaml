@@ -1,0 +1,10 @@
+# cloudbuild.yaml
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "$_IMAGE", "."]
+  - name: gcr.io/cloud-builders/docker
+    args: ["push", "$_IMAGE"]
+substitutions:
+  _IMAGE: "asia-northeast1-docker.pkg.dev/$PROJECT_ID/containers/vm-ctrl:latest"
+images:
+  - "$_IMAGE"

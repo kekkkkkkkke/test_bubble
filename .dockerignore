@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# VCS
+.git
+.gitignore
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# 置かない方がよい秘密系
+*.json
+*.key
+*.pem
+.env
