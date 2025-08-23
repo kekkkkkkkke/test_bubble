@@ -1,12 +1,11 @@
-# app/main.py
-import os, requests
+import requests
 from fastapi import FastAPI, HTTPException, Query
+import os
 from google.auth import default as google_auth_default
 from google.auth.transport.requests import Request
 
 app = FastAPI()
 
-# ヘルス確認用（起動確認に使う）
 @app.get("/")
 def root():
     return {"ok": True}
@@ -21,31 +20,37 @@ def get_access_token(scope="https://www.googleapis.com/auth/cloud-platform"):
         creds.refresh(Request())
     return creds.token
 
-def gce_post(url: str):
+def gce_req(method, url):
     token = get_access_token()
-    r = requests.post(url, headers={"Authorization": f"Bearer {token}"})
+    r = requests.request(method, url, headers={"Authorization": f"Bearer {token}"})
     if r.status_code >= 300:
         raise HTTPException(status_code=500, detail=r.text)
     return r.json()
 
 @app.post("/vm/start")
-def vm_start(
-    project: str = Query(default=PROJECT_ID),
-    zone: str    = Query(default=ZONE),
-    instance: str= Query(default=INSTANCE),
-):
+def vm_start(project: str = Query(default=PROJECT_ID),
+             zone: str    = Query(default=ZONE),
+             instance: str= Query(default=INSTANCE)):
     if not (project and zone and instance):
         raise HTTPException(400, "PROJECT_ID/ZONE/INSTANCE not set")
     url = f"https://compute.googleapis.com/compute/v1/projects/{project}/zones/{zone}/instances/{instance}/start"
-    return gce_post(url)
+    return gce_req("POST", url)
 
 @app.post("/vm/stop")
-def vm_stop(
-    project: str = Query(default=PROJECT_ID),
-    zone: str    = Query(default=ZONE),
-    instance: str= Query(default=INSTANCE),
-):
+def vm_stop(project: str = Query(default=PROJECT_ID),
+            zone: str    = Query(default=ZONE),
+            instance: str= Query(default=INSTANCE)):
     if not (project and zone and instance):
         raise HTTPException(400, "PROJECT_ID/ZONE/INSTANCE not set")
     url = f"https://compute.googleapis.com/compute/v1/projects/{project}/zones/{zone}/instances/{instance}/stop"
-    return gce_post(url)
+    return gce_req("POST", url)
+
+@app.get("/vm/status")
+def vm_status(project: str = Query(default=PROJECT_ID),
+              zone: str    = Query(default=ZONE),
+              instance: str= Query(default=INSTANCE)):
+    if not (project and zone and instance):
+        raise HTTPException(400, "PROJECT_ID/ZONE/INSTANCE not set")
+    url = f"https://compute.googleapis.com/compute/v1/projects/{project}/zones/{zone}/instances/{instance}"
+    j = gce_req("GET", url)
+    return {"name": instance, "zone": zone, "status": j.get("status", "UNKNOWN")}
