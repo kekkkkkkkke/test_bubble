@@ -9,13 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from google.auth import default as google_auth_default
 from google.auth.transport.requests import Request
 
-# ---------------------------
-# FastAPI app & middlewares
-# ---------------------------
-app = FastAPI(title="GCE VM Controller", version="1.0.0")
+app = FastAPI(title="GCE VM Controller", version="1.1.0")
 
-# CORS: 必要なら Cloud Run の環境変数 ALLOW_ORIGINS に
-# "https://your-bubble-app.bubbleapps.io,https://example.com" のようにカンマ区切りで指定
+# --- CORS ---
 _allow_origins = os.environ.get("ALLOW_ORIGINS", "*")
 allow_origins = [o.strip() for o in _allow_origins.split(",")] if _allow_origins else ["*"]
 app.add_middleware(
@@ -25,19 +21,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------------------------
-# Config from env (optional defaults)
-# ---------------------------
+# --- Config ---
 PROJECT_ID = os.environ.get("PROJECT_ID", "")
 ZONE       = os.environ.get("ZONE", "")
 INSTANCE   = os.environ.get("INSTANCE", "")
-API_KEY    = os.environ.get("API_KEY")  # 設定されている場合のみ検証する
+API_KEY    = os.environ.get("API_KEY")
+COMFY_BASEURL = os.environ.get("COMFY_BASEURL")  # 例: http://10.0.0.5:8188  （任意）
 
-# ---------------------------
-# Helpers
-# ---------------------------
+# --- Requests セッション（★ タイムアウト & 軽いリトライ） ---
+_session = requests.Session()
+# 429/5xx 系のみ軽くリトライ（最大3回）
+from requests.adapters import HTTPAdapter, Retry  # type: ignore
+_retry = Retry(
+    total=3,
+    backoff_factor=0.5,
+    status_forcelist=[429, 500, 502, 503, 504],
+    allowed_methods=frozenset(["GET", "POST"])
+)
+_session.mount("https://", HTTPAdapter(max_retries=_retry))
+_session.mount("http://",  HTTPAdapter(max_retries=_retry))
+_DEFAULT_TIMEOUT = (3, 30)  # (connect, read) seconds
+
+# --- Helpers ---
 def check_key(x_api_key: Optional[str]) -> None:
-    """APIキー検証（API_KEY が未設定のときはスキップ）"""
     if API_KEY and x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="unauthorized")
 
@@ -51,30 +57,36 @@ def get_access_token(scope: str = "https://www.googleapis.com/auth/cloud-platfor
         creds.refresh(Request())
     return creds.token
 
+def _raise_http(status: int, text: str):
+    # ★ JSONなら中身を返す／そうでなければ短い文字列へ
+    detail = text
+    try:
+        import json
+        detail = json.loads(text)  # type: ignore
+    except Exception:
+        # 長すぎるHTMLなどは圧縮
+        detail = {"error": text[:1000]}
+    raise HTTPException(status_code=status, detail=detail)
+
 def gce_req(method: str, url: str):
-    """Google Compute Engine REST を呼ぶ汎用関数（認証含む）"""
     token = get_access_token()
-    r = requests.request(method, url, headers={"Authorization": f"Bearer {token}"})
-    # GCE のエラー本文をそのまま返すとデバッグしやすい
+    r = _session.request(method, url, headers={"Authorization": f"Bearer {token}"},
+                         timeout=_DEFAULT_TIMEOUT)
     if r.status_code >= 300:
-        # 404 などはそのまま透過させる
-        raise HTTPException(status_code=r.status_code, detail=r.text)
-    return r.json()
+        _raise_http(r.status_code, r.text)
+    # 一部のGETは空ボディのこともある
+    return r.json() if r.text else {}
 
 def instance_url(project: str, zone: str, instance: str) -> str:
     return f"https://compute.googleapis.com/compute/v1/projects/{project}/zones/{zone}/instances/{instance}"
 
-# ---------------------------
-# Health
-# ---------------------------
+# --- Health ---
 @app.get("/")
 def root():
     return {"ok": True, "service": "vm-ctrl"}
 
-# ---------------------------
-# Start / Stop / Status
-# ---------------------------
-@app.post("/vm/start")
+# --- Start / Stop / Status ---
+@app.api_route("/vm/start", methods=["POST", "GET"])  # ★ GETも許容（任意）
 def vm_start(
     project: str = Query(default=PROJECT_ID),
     zone: str    = Query(default=ZONE),
@@ -84,9 +96,9 @@ def vm_start(
     check_key(x_api_key)
     ensure_params(project, zone, instance)
     url = instance_url(project, zone, instance) + "/start"
-    return gce_req("POST", url)  # 非同期 Operation を返す
+    return gce_req("POST", url)
 
-@app.post("/vm/stop")
+@app.api_route("/vm/stop", methods=["POST", "GET"])   # ★ GETも許容（任意）
 def vm_stop(
     project: str = Query(default=PROJECT_ID),
     zone: str    = Query(default=ZONE),
@@ -96,9 +108,9 @@ def vm_stop(
     check_key(x_api_key)
     ensure_params(project, zone, instance)
     url = instance_url(project, zone, instance) + "/stop"
-    return gce_req("POST", url)  # 非同期 Operation を返す
+    return gce_req("POST", url)
 
-@app.get("/vm/status")
+@app.api_route("/vm/status", methods=["GET", "POST"])  # ★ POSTも許容（任意）
 def vm_status(
     project: str = Query(default=PROJECT_ID),
     zone: str    = Query(default=ZONE),
@@ -108,30 +120,21 @@ def vm_status(
     check_key(x_api_key)
     ensure_params(project, zone, instance)
     j = gce_req("GET", instance_url(project, zone, instance))
-    # 代表例: PROVISIONING -> STAGING -> RUNNING / STOPPING -> TERMINATED
     return {"name": instance, "zone": zone, "status": j.get("status", "UNKNOWN")}
 
-# ---------------------------
-# Wait until target status (optional but handy for Bubble)
-# ---------------------------
+# --- Wait until target status ---
 @app.post("/vm/wait")
 def vm_wait(
     target: str  = Query(default="RUNNING", pattern="^(RUNNING|TERMINATED)$"),
     project: str = Query(default=PROJECT_ID),
     zone: str    = Query(default=ZONE),
     instance: str= Query(default=INSTANCE),
-    max_checks: int   = Query(default=60, ge=1, le=600),  # 5秒*60=最大5分
+    max_checks: int   = Query(default=60, ge=1, le=600),
     interval_sec: int = Query(default=5, ge=1, le=60),
     x_api_key: Optional[str] = Header(default=None),
 ):
-    """
-    例:
-      起動待ち: POST /vm/start → POST /vm/wait?target=RUNNING
-      停止待ち: POST /vm/stop  → POST /vm/wait?target=TERMINATED
-    """
     check_key(x_api_key)
     ensure_params(project, zone, instance)
-
     url = instance_url(project, zone, instance)
     last_status = "UNKNOWN"
     for _ in range(max_checks):
@@ -140,5 +143,16 @@ def vm_wait(
         if last_status == target:
             return {"name": instance, "zone": zone, "status": last_status}
         time.sleep(interval_sec)
-
     raise HTTPException(status_code=408, detail=f"timeout: last status={last_status}")
+
+# --- ComfyUI ping（疎通確認用・任意） ---
+@app.get("/comfy/ping")
+def comfy_ping(x_api_key: Optional[str] = Header(default=None)):
+    check_key(x_api_key)
+    if not COMFY_BASEURL:
+        raise HTTPException(500, "COMFY_BASEURL not set")
+    try:
+        r = _session.get(f"{COMFY_BASEURL}/system_stats", timeout=_DEFAULT_TIMEOUT)
+        return {"ok": r.ok, "status": r.status_code}
+    except Exception as e:
+        raise HTTPException(502, f"connect failed: {e}")
