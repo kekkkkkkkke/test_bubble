@@ -122,28 +122,7 @@ def vm_status(
     j = gce_req("GET", instance_url(project, zone, instance))
     return {"name": instance, "zone": zone, "status": j.get("status", "UNKNOWN")}
 
-# --- Wait until target status ---
-@app.post("/vm/wait")
-def vm_wait(
-    target: str  = Query(default="RUNNING", pattern="^(RUNNING|TERMINATED)$"),
-    project: str = Query(default=PROJECT_ID),
-    zone: str    = Query(default=ZONE),
-    instance: str= Query(default=INSTANCE),
-    max_checks: int   = Query(default=60, ge=1, le=600),
-    interval_sec: int = Query(default=5, ge=1, le=60),
-    x_api_key: Optional[str] = Header(default=None),
-):
-    check_key(x_api_key)
-    ensure_params(project, zone, instance)
-    url = instance_url(project, zone, instance)
-    last_status = "UNKNOWN"
-    for _ in range(max_checks):
-        j = gce_req("GET", url)
-        last_status = j.get("status", "UNKNOWN")
-        if last_status == target:
-            return {"name": instance, "zone": zone, "status": last_status}
-        time.sleep(interval_sec)
-    raise HTTPException(status_code=408, detail=f"timeout: last status={last_status}")
+
 
 # --- ComfyUI ping（疎通確認用・任意） ---
 @app.get("/comfy/ping")
