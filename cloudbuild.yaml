@@ -1,5 +1,5 @@
 substitutions:
-  _PROJECT_ID: "text-sns-prod-58480"   # ← 自分のプロジェクトIDを直接書く
+  _PROJECT_ID: "pure-loop-470510-a7"   # ← 自分のプロジェクトIDを直接書く
   _IMAGE: "asia-northeast1-docker.pkg.dev/${_PROJECT_ID}/containers/vm-ctrl:latest"
 
 steps:
